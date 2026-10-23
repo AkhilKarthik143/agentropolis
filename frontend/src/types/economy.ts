@@ -29,6 +29,26 @@ export type EconomyBusiness = {
   credit_score?: number;
   credit_reason?: string;
   supplier_note?: string;
+  capacity?: Record<string, number>;
+};
+
+export type EconomyAgent = {
+  agent_id: string;
+  business_id: string;
+  role: string;
+  objective: string;
+  permissions: string[];
+  status: string;
+  last_task_id?: string | null;
+  handled_messages: number;
+  decisions: number;
+};
+
+export type AgentRuntimeSnapshot = {
+  agents: EconomyAgent[];
+  tasks: Record<string, unknown>[];
+  messages: Record<string, unknown>[];
+  transport?: { mode: string; queued_messages: number };
 };
 
 export type EconomyContract = {
@@ -98,5 +118,6 @@ export type EconomySummary = {
   finance?: FinanceSnapshot;
   audit?: { valid: boolean; event_count?: number; first_break_seq?: number | null; reason?: string };
   events: EconomyEvent[];
+  agent_runtime?: AgentRuntimeSnapshot;
 };
 

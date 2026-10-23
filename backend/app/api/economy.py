@@ -18,6 +18,7 @@ from app.events.schemas import Proposal, ProposalType
 from app.events.store import MemoryStore, SqliteStore
 from app.finance.approvals import ApprovalError
 from app.core.config import settings
+from app.orchestration.runtime import AgentRuntime
 
 
 class EconomyRuntime:
@@ -54,6 +55,7 @@ class EconomyRuntime:
                 credit_score=int(row.get("credit_score", 82)),
                 credit_reason=str(row.get("credit_reason", "seeded demo credit result")),
                 supplier_note=str(row.get("supplier_note", "")),
+                capacity={str(key): int(value) for key, value in row.get("capacity", {}).items()},
             ), opening_cents=int(row["opening_cents"]))
         buyer = self.engine.businesses["cafe_lumen"]
         supplier = self.engine.businesses["northstar_roasters"]
@@ -80,6 +82,8 @@ class EconomyRuntime:
             private_rationale="Threshold policy blocks autonomous capital equipment spend.",
         ))
         self.seeded = True
+        self.agent_runtime = AgentRuntime(self.engine)
+        self.engine.attach_agent_runtime(self.agent_runtime)
 
 
 _runtime: EconomyRuntime | None = None
@@ -163,7 +167,8 @@ async def businesses() -> list[dict[str, Any]]:
 
 @router.post("/businesses")
 async def create_business(request: BusinessCreate) -> dict[str, Any]:
-    engine = get_runtime().engine
+    runtime = get_runtime()
+    engine = runtime.engine
     business_id = "biz_" + "".join(char.lower() if char.isalnum() else "_" for char in request.name).strip("_")
     if business_id in engine.businesses:
         raise HTTPException(status_code=409, detail="business already exists")
@@ -172,6 +177,8 @@ async def create_business(request: BusinessCreate) -> dict[str, Any]:
         reliability=0.9, reserve_cents=request.reserve_cents, spend_limit_cents=request.budget_cents,
         categories=[], objective=request.objective,
     ), opening_cents=request.budget_cents)
+    if runtime.agent_runtime:
+        runtime.agent_runtime.register_business(business)
     return {"business": engine.business_snapshot(business.business_id), "objective": request.objective}
 
 
@@ -211,10 +218,36 @@ async def decisions() -> list[dict[str, Any]]:
     return [event.model_dump(mode="json") for event in get_runtime().engine.bus.replay() if "validation" in event.payload or event.type in {"ApprovalRequested", "ApprovalGranted", "ApprovalDenied"}]
 
 
+@router.get("/agents")
+async def agents() -> dict[str, Any]:
+    runtime = get_runtime()
+    return runtime.agent_runtime.snapshot() if runtime.agent_runtime else {"agents": [], "tasks": [], "messages": []}
+
+
+@router.get("/agents/tasks")
+async def agent_tasks() -> list[dict[str, Any]]:
+    runtime = get_runtime()
+    return runtime.agent_runtime.snapshot()["tasks"] if runtime.agent_runtime else []
+
+
+@router.get("/agents/messages")
+async def agent_messages() -> list[dict[str, Any]]:
+    runtime = get_runtime()
+    return runtime.agent_runtime.snapshot()["messages"] if runtime.agent_runtime else []
+
+
 @router.post("/tick")
 async def tick() -> dict[str, Any]:
     engine = get_runtime().engine
     return {"clock": engine.clock.now(), "actions": engine.tick()}
+
+
+@router.post("/contracts/{deal_id}/deliver")
+async def deliver_contract(deal_id: str) -> dict[str, Any]:
+    try:
+        return get_runtime().engine.deliver_contract(deal_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/events")
@@ -294,7 +327,6 @@ async def start_simulation(simulation_id: str) -> dict[str, Any]:
     runtime = get_simulation(simulation_id)
     runtime.status = "running"
     runtime.engine._emit("SimulationStarted", payload={"simulation_id": simulation_id})
-    runtime.engine._emit("NeedDetected", "cafe_lumen", payload={"item": "coffee_beans", "trigger": "sim_clock"})
     runtime.engine.tick()
     return _simulation_payload(runtime)
 
@@ -339,6 +371,20 @@ async def simulation_approval(simulation_id: str, approval_id: str, decision: Ap
         return get_simulation(simulation_id).engine.resolve_approval(approval_id, decision.approver, decision.approved).as_dict()
     except ApprovalError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@simulation_router.post("/{simulation_id}/contracts/{deal_id}/deliver")
+async def simulation_deliver_contract(simulation_id: str, deal_id: str) -> dict[str, Any]:
+    try:
+        return get_simulation(simulation_id).engine.deliver_contract(deal_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@simulation_router.get("/{simulation_id}/agents")
+async def simulation_agents(simulation_id: str) -> dict[str, Any]:
+    runtime = get_simulation(simulation_id)
+    return runtime.agent_runtime.snapshot() if runtime.agent_runtime else {"agents": [], "tasks": [], "messages": []}
 
 
 @simulation_router.post("/{simulation_id}/replay")

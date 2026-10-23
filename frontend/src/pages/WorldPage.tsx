@@ -1,5 +1,5 @@
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { ArrowUpRight, Boxes, CircleDollarSign, Network, ShieldCheck, Users, X } from 'lucide-react';
+import { ArrowUpRight, Bot, Boxes, CircleDollarSign, Network, ShieldCheck, Users, X } from 'lucide-react';
 import { useRef, useState, type Dispatch, type MouseEvent, type RefCallback, type SetStateAction } from 'react';
 import { Link } from 'react-router-dom';
 import { AnimatedGroup } from '@/components/motion/AnimatedGroup';
@@ -43,6 +43,8 @@ export function WorldPage() {
   const businesses = summary?.businesses ?? [];
   const buyer = businesses.find((business) => business.role === 'buyer');
   const contracts = summary?.contracts ?? [];
+  const agentRuntime = summary?.agent_runtime;
+  const agents = agentRuntime?.agents ?? [];
   const latestEvent = events.at(-1);
   const latestShockIndex = [...events].reverse().findIndex((event) => event.type === 'ShockInjected');
   const latestShock = latestShockIndex >= 0 ? events[events.length - 1 - latestShockIndex] : undefined;
@@ -61,6 +63,7 @@ export function WorldPage() {
     <AnimatedGroup className="economy-stat-grid" preset="blur-slide">
       {[{ label: 'Businesses in orbit', value: businesses.length, icon: Users, note: 'registered agents' }, { label: 'Treasury position', value: buyer?.cash_cents ?? 0, money: true, icon: CircleDollarSign, note: 'Lumen Coffee Co.' }, { label: 'Inventory on hand', value: Object.values(buyer?.inventory ?? {}).reduce((sum, value) => sum + value, 0), icon: Boxes, note: 'units across SKUs' }, { label: 'Policy health', value: `${Math.round((buyer?.reliability ?? 0) * 100)}%`, icon: ShieldCheck, note: 'reserve protected' }].map(({ label, value, icon: Icon, note, money }) => <div className="economy-stat-card" key={label}><div className="stat-card-icon"><Icon size={16} /></div><div className="economy-stat-label">{label}</div><div className="economy-stat-value">{money ? <Money cents={value as number} /> : value}</div><div className="economy-stat-note">{note}</div></div>)}
     </AnimatedGroup>
+    <section className="economy-panel agent-network-panel"><div className="economy-panel-heading"><div><span className="economy-overline">LIVE AGENT TEAMS</span><h3>Decisions have owners</h3></div><span className="economy-panel-meta"><Bot size={14} /> {agents.length} active roles</span></div><div className="agent-team-grid">{agents.map((agent) => <div className="agent-team-card" key={agent.agent_id}><div className="agent-team-card-top"><span className="agent-role-icon"><Bot size={13} /></span><span className={`agent-status agent-status-${agent.status}`}>{agent.status}</span></div><strong>{agent.role}</strong><small>{agent.business_id}</small><div className="agent-team-card-meta"><span>{agent.handled_messages} messages</span><span>{agent.decisions} decisions</span></div></div>)}</div>{agentRuntime && <div className="agent-runtime-footer"><span>{agentRuntime.tasks.length} persisted tasks</span><span>{agentRuntime.messages.length} routed messages</span><span>{agentRuntime.transport?.mode ?? 'inprocess'} transport</span></div>}</section>
     <section className="world-lower-grid">
       <div className="economy-panel world-map-panel"><div className="economy-panel-heading"><div><span className="economy-overline">AGENT NETWORK</span><h3>Who is trading with whom</h3></div><span className="economy-panel-meta"><Network size={14} /> {businesses.length} nodes</span></div><div ref={mapRef} className={`world-map ${shockActive ? 'world-map-shock' : ''}`}>
         <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">{[[20, 49, 48, 23], [20, 49, 74, 47], [20, 49, 37, 77], [20, 49, 77, 78], [20, 49, 58, 66]].map(([x1, y1, x2, y2], index) => <motion.line key={index} x1={x1} y1={y1} x2={x2} y2={y2} className={flowActive ? 'world-flow-line-active' : ''} initial={{ strokeDashoffset: 6 }} animate={flowActive && !reducedMotion ? { strokeDashoffset: [6, 0] } : { strokeDashoffset: flowActive ? 0 : 6 }} transition={flowActive && !reducedMotion ? { duration: 0.9, repeat: 1, ease: 'easeInOut' } : { duration: reducedMotion ? 0 : 0.2 }} />)}</svg>{businesses.map((business, index) => <Node key={business.business_id} business={business} index={index} active={eventIds.has(business.business_id)} disrupted={shockActive && eventIds.has(business.business_id)} reducedMotion={Boolean(reducedMotion)} onSelect={setSelectedBusiness} nodeRef={(node) => { nodeRefs.current[business.business_id] = node; if (business.business_id === buyer?.business_id) buyerBeamRef.current = node; if (business.business_id === activeCounterpartId) counterpartBeamRef.current = node; }} />)}

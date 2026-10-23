@@ -48,6 +48,7 @@ class Business:
     credit_score: int = 82
     credit_reason: str = "seeded demo credit result"
     supplier_note: str = ""
+    capacity: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -85,6 +86,11 @@ class EconomyEngine:
         self._pending: dict[str, Proposal] = {}
         self._lock = RLock()
         self._event_epoch = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        self.agent_runtime: Any | None = None
+
+    def attach_agent_runtime(self, runtime: Any) -> None:
+        """Attach the event-driven team scheduler after businesses are seeded."""
+        self.agent_runtime = runtime
 
     def _event_time(self) -> datetime:
         return self._event_epoch + timedelta(seconds=len(self.bus.replay()))
@@ -123,7 +129,7 @@ class EconomyEngine:
     def business_snapshot(self, business_id: str) -> dict[str, Any]:
         business = self.businesses[business_id]
         cash = self.ledger.balance(business_id, Account.CASH)
-        return {"business_id": business.business_id, "name": business.name, "kind": business.kind, "role": business.role, "reliability": business.reliability, "reserve_cents": business.reserve_cents, "spend_limit_cents": business.spend_limit_cents, "objective": business.objective, "categories": list(business.categories), "inventory": dict(business.inventory.quantities), "inventory_item": business.inventory_item, "low_stock_threshold": business.low_stock_threshold, "negotiation_style": business.negotiation_style, "credit_status": business.credit_status, "credit_score": business.credit_score, "credit_reason": business.credit_reason, "supplier_note": business.supplier_note, "cash_cents": cash, "account_id": business.account_id, "active": business.active, "bank": business.bank}
+        return {"business_id": business.business_id, "name": business.name, "kind": business.kind, "role": business.role, "reliability": business.reliability, "reserve_cents": business.reserve_cents, "spend_limit_cents": business.spend_limit_cents, "objective": business.objective, "categories": list(business.categories), "inventory": dict(business.inventory.quantities), "inventory_item": business.inventory_item, "low_stock_threshold": business.low_stock_threshold, "negotiation_style": business.negotiation_style, "credit_status": business.credit_status, "credit_score": business.credit_score, "credit_reason": business.credit_reason, "supplier_note": business.supplier_note, "capacity": dict(business.capacity), "cash_cents": cash, "account_id": business.account_id, "active": business.active, "bank": business.bank}
 
     def _validate(self, proposal: Proposal) -> tuple[ValidationResult, int]:
         if proposal.business_id not in self.businesses:
@@ -270,10 +276,10 @@ class EconomyEngine:
         except Exception as exc:
             self.bank.transfer(supplier.account_id, buyer.account_id, amount, "Compensating reversal", f"reversal:{proposal.idempotency_key}")
             return ProposalOutcome("rejected", proposal.proposal_id, deal_id=deal_id, reason=f"ledger rejected transaction: {exc}", validation={"stage": "ledger", "reason_code": "LEDGER_REJECTED"})
-        buyer.inventory.add(proposal.item or "goods", proposal.quantity or 0)
+        delivery_mode = str(proposal.metadata.get("delivery_mode", "immediate"))
         is_recovery = bool(proposal.metadata.get("recovery"))
         initial_state = EconomyState.RECOVERY_NEGOTIATION if is_recovery else EconomyState.CONTRACTED
-        contract = Contract(deal_id, buyer.business_id, supplier.business_id, proposal.item or "goods", proposal.quantity or 0, proposal.unit_price_cents or 0, amount, proposal.delivery_days or 0, ContractStatus.PAID, proposal.proposal_id, proposal.public_rationale or proposal.rationale, supplier.reliability, initial_state)
+        contract = Contract(deal_id, buyer.business_id, supplier.business_id, proposal.item or "goods", proposal.quantity or 0, proposal.unit_price_cents or 0, amount, proposal.delivery_days or 0, ContractStatus.PAID, proposal.proposal_id, proposal.public_rationale or proposal.rationale, supplier.reliability, initial_state, delivery_mode=delivery_mode)
         self.contracts[deal_id] = contract
         self._emit("ContractAccepted", buyer.business_id, deal_id, proposal=proposal, payload={"contract": self.contract_snapshot(deal_id)})
         if is_recovery:
@@ -283,8 +289,33 @@ class EconomyEngine:
         self._transition_contract(contract, EconomyState.PAYMENT_RECORDED, proposal=proposal)
         self._emit("LedgerPosted", buyer.business_id, deal_id, proposal=proposal, payload={"entry_id": entry.entry_id, "balanced": self.ledger.is_balanced()})
         self._transition_contract(contract, EconomyState.AWAITING_DELIVERY, proposal=proposal)
+        if delivery_mode == "on_receipt":
+            self._emit("GoodsAwaitingDelivery", buyer.business_id, deal_id, proposal=proposal, payload={"item": contract.item, "quantity": contract.quantity, "delivery_days": contract.delivery_days})
+        else:
+            buyer.inventory.add(contract.item, contract.quantity)
+            contract.delivered_quantity = contract.quantity
+            self._emit("InventoryReceiptConfirmed", buyer.business_id, deal_id, proposal=proposal, payload={"item": contract.item, "quantity": contract.quantity, "mode": "immediate_compatibility"})
         self._emit("Reconciled", buyer.business_id, deal_id, proposal=proposal, payload={"status": "pending_next_check"})
         return ProposalOutcome("executed", proposal.proposal_id, deal_id=deal_id, validation=validation.model_dump())
+
+    def deliver_contract(self, deal_id: str) -> dict[str, Any]:
+        """Confirm physical receipt after payment and contract authorization."""
+        with self._lock:
+            contract = self.contracts.get(deal_id)
+            if contract is None:
+                raise ValueError("contract not found")
+            if contract.delivered_quantity >= contract.quantity:
+                return self.contract_snapshot(deal_id)
+            if contract.state is not EconomyState.AWAITING_DELIVERY:
+                raise ValueError(f"contract is not awaiting delivery: {contract.state}")
+            buyer = self.businesses[contract.buyer_id]
+            buyer.inventory.add(contract.item, contract.quantity)
+            contract.delivered_quantity = contract.quantity
+            contract.status = ContractStatus.DELIVERED
+            self._transition_contract(contract, EconomyState.DELIVERED, payload={"item": contract.item, "quantity": contract.quantity})
+            self._emit("GoodsDelivered", contract.buyer_id, deal_id, payload={"supplier_id": contract.supplier_id, "item": contract.item, "quantity": contract.quantity})
+            self._emit("InventoryReceiptConfirmed", contract.buyer_id, deal_id, payload={"item": contract.item, "quantity": contract.quantity, "mode": "delivery_confirmation"})
+            return self.contract_snapshot(deal_id)
 
     def resolve_approval(self, approval_id: str, approver: str, granted: bool) -> ProposalOutcome:
         with self._lock:
@@ -322,7 +353,7 @@ class EconomyEngine:
 
     def contract_snapshot(self, contract_id: str) -> dict[str, Any]:
         contract = self.contracts[contract_id]
-        return {"contract_id": contract.contract_id, "buyer_id": contract.buyer_id, "supplier_id": contract.supplier_id, "item": contract.item, "quantity": contract.quantity, "unit_price_cents": contract.unit_price_cents, "total_cents": contract.total_cents, "delivery_days": contract.delivery_days, "status": contract.status.value, "state": contract.session_state, "proposal_id": contract.proposal_id, "rationale": contract.rationale, "reliability": contract.reliability}
+        return {"contract_id": contract.contract_id, "buyer_id": contract.buyer_id, "supplier_id": contract.supplier_id, "item": contract.item, "quantity": contract.quantity, "delivered_quantity": contract.delivered_quantity, "delivery_mode": contract.delivery_mode, "unit_price_cents": contract.unit_price_cents, "total_cents": contract.total_cents, "delivery_days": contract.delivery_days, "status": contract.status.value, "state": contract.session_state, "proposal_id": contract.proposal_id, "rationale": contract.rationale, "reliability": contract.reliability}
 
     def shock(self, shock_type: str, supplier_id: str | None = None) -> dict[str, Any]:
         with self._lock:
@@ -386,7 +417,10 @@ class EconomyEngine:
             return {"ok": True, "shock_type": shock_type}
 
     def summary(self) -> dict[str, Any]:
-        return {"mode": "MOCK", "clock": self.clock.now(), "businesses": [self.business_snapshot(bid) for bid in self.businesses], "offers": list(self.offers.values()), "contracts": [self.contract_snapshot(cid) for cid in self.contracts], "approvals": self.approvals.snapshot(), "ledger": self.ledger.snapshot(), "trial_balance": self.ledger.trial_balance(), "ledger_proof": self.ledger.proof(), "finance": self.controls.snapshot(), "audit": verify_chain(self.bus.replay()), "events": [event.model_dump(mode="json") for event in self.bus.replay(max(0, len(self.bus.replay()) - 30))]}
+        payload = {"mode": "MOCK", "clock": self.clock.now(), "businesses": [self.business_snapshot(bid) for bid in self.businesses], "offers": list(self.offers.values()), "contracts": [self.contract_snapshot(cid) for cid in self.contracts], "approvals": self.approvals.snapshot(), "ledger": self.ledger.snapshot(), "trial_balance": self.ledger.trial_balance(), "ledger_proof": self.ledger.proof(), "finance": self.controls.snapshot(), "audit": verify_chain(self.bus.replay()), "events": [event.model_dump(mode="json") for event in self.bus.replay(max(0, len(self.bus.replay()) - 30))]}
+        if self.agent_runtime is not None:
+            payload["agent_runtime"] = self.agent_runtime.snapshot()
+        return payload
 
     def audit_verification(self) -> dict[str, Any]:
         return verify_chain(self.bus.replay())
@@ -415,7 +449,7 @@ class EconomyEngine:
         self._emit("X402_SUPPLIER_INTELLIGENCE_PAID", buyer.business_id, payload=report, idempotency_key=f"x402:{supplier.business_id}:{tick_key}")
         return report
 
-    def tick(self) -> list[dict[str, Any]]:
+    def _legacy_tick(self) -> list[dict[str, Any]]:
         """Run one autonomous scheduler tick; user prompts are not required."""
         with self._lock:
             self.clock.advance(ticks=1)
@@ -465,4 +499,11 @@ class EconomyEngine:
                 actions.append(self.submit_proposal(proposal).as_dict())
             self._emit("SchedulerTick", payload={"clock": self.clock.now(), "actions": len(actions)})
             return actions
+
+    def tick(self) -> list[dict[str, Any]]:
+        """Run one clock step through business agents when attached."""
+        with self._lock:
+            if self.agent_runtime is not None:
+                return self.agent_runtime.tick()
+            return self._legacy_tick()
 

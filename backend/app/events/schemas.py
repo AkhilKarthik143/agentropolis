@@ -18,6 +18,56 @@ class ProposalType(StrEnum):
     FINANCING_REQUEST = "FINANCING_REQUEST"
 
 
+class AgentMessageType(StrEnum):
+    INVENTORY_LOW = "INVENTORY_LOW"
+    TASK_ASSIGNED = "TASK_ASSIGNED"
+    REQUEST_FOR_QUOTE = "REQUEST_FOR_QUOTE"
+    QUOTE = "QUOTE"
+    COUNTER_OFFER = "COUNTER_OFFER"
+    RISK_REVIEW = "RISK_REVIEW"
+    TREASURY_REVIEW = "TREASURY_REVIEW"
+    ACTION_PROPOSAL = "ACTION_PROPOSAL"
+    ACTION_RESULT = "ACTION_RESULT"
+    ACK = "ACK"
+
+
+class AgentTaskStatus(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    WAITING = "waiting"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class AgentMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    message_id: str = Field(default_factory=lambda: f"msg_{uuid4().hex[:12]}")
+    message_type: AgentMessageType = AgentMessageType.ACK
+    sender_id: str
+    recipient_id: str
+    business_id: str
+    simulation_id: str
+    correlation_id: str | None = None
+    idempotency_key: str = Field(default_factory=lambda: f"idem_msg_{uuid4().hex}")
+    payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class AgentTask(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: str = Field(default_factory=lambda: f"task_{uuid4().hex[:12]}")
+    task_type: str
+    business_id: str
+    assigned_agent_id: str
+    correlation_id: str | None = None
+    status: AgentTaskStatus = AgentTaskStatus.QUEUED
+    payload: dict[str, Any] = Field(default_factory=dict)
+    result: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 class Proposal(BaseModel):
     """The only input shape the deterministic economy engine accepts."""
 

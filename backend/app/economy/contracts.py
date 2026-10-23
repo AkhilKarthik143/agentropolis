@@ -31,6 +31,8 @@ class Contract:
     rationale: str
     reliability: float
     state: EconomyState = EconomyState.PAYMENT_RECORDED
+    delivery_mode: str = "immediate"
+    delivered_quantity: int = 0
 
     def transition(self, status: ContractStatus) -> None:
         allowed = {

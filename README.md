@@ -45,7 +45,7 @@ credentials are optional and are never copied from another project.
 
 ```text
 agentropolis/
-├── backend/app/       FastAPI app, economy, agents, finance, integrations
+├── backend/app/       FastAPI app, economy, business agents, finance, integrations
 ├── backend/tests/     backend tests
 ├── backend/migrations/SQLite migrations
 ├── frontend/          standalone React/Vite app
@@ -53,3 +53,8 @@ agentropolis/
 ├── docs/               architecture, migration, setup, sponsor status
 └── .env.example        Agentropolis-only configuration
 ```
+
+The current autonomous team lifecycle is documented in
+[`docs/agent-ecosystem.md`](docs/agent-ecosystem.md). It includes independent
+buyer and supplier roles, typed task/message events, deferred delivery, and a
+trusted deterministic execution boundary.
