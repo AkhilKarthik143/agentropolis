@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PORT="${AGENTROPOLIS_SMOKE_PORT:-8098}"
 FULL_MODE="${1:-}"
 LOG_FILE="$(mktemp -t agentropolis-smoke).log"
@@ -27,7 +27,7 @@ full = sys.argv[2] == "--full"
 url = f"http://127.0.0.1:{port}"
 for _ in range(40):
     try:
-        urllib.request.urlopen(url + "/api/health", timeout=1).read()
+        urllib.request.urlopen(url + "/health", timeout=1).read()
         break
     except Exception:
         time.sleep(.2)

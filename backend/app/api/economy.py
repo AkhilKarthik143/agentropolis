@@ -27,7 +27,7 @@ class EconomyRuntime:
             from app.events.spacetime import SpacetimeStore
             store = SpacetimeStore(os.getenv("SPACETIMEDB_URI"), os.getenv("SPACETIMEDB_DATABASE"))
         else:
-            store = MemoryStore() if store_mode == "memory" else SqliteStore(Path(os.getenv("AGENTROPOLIS_DATA_DIR", str(settings.data_dir))) / "economy.db")
+            store = MemoryStore() if store_mode == "memory" else SqliteStore(settings.event_database)
         self.session_id = session_id
         self.status = "created"
         self.engine = EconomyEngine(bus=EventBus(store=store), seed=int(os.getenv("AGENTROPOLIS_SEED", str(settings.seed))), session_id=session_id)
