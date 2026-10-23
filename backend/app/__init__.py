@@ -1,0 +1,1 @@
+"""Standalone Agentropolis application package."""

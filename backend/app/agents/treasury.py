@@ -1,0 +1,3 @@
+class TreasuryAgent:
+    role = "treasury"
+

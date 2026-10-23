@@ -1,0 +1,3 @@
+class RiskAgent:
+    role = "risk"
+

@@ -1,0 +1,3 @@
+class AccountantAgent:
+    role = "accountant"
+
