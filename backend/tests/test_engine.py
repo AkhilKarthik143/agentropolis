@@ -1,12 +1,13 @@
 from app.economy.engine import Business, EconomyEngine
 from app.events.schemas import Proposal, ProposalType
 from app.finance.approvals import ApprovalManager
+from app.economy.inventory import Inventory
 
 
 def make_engine() -> EconomyEngine:
     engine = EconomyEngine(approvals=ApprovalManager(threshold_cents=50_000, minimum_reserve_cents=20_000))
     engine.register_business(Business("buyer", "Buyer", "shop", "buyer", .99, 20_000, 200_000), 100_000)
-    engine.register_business(Business("seller", "Seller", "supplier", "supplier", .9, 10_000, 200_000), 100_000)
+    engine.register_business(Business("seller", "Seller", "supplier", "supplier", .9, 10_000, 200_000, inventory=Inventory({"beans":100}),catalog={"beans":{"unit":"unit","cost_price_cents":500}}), 100_000)
     return engine
 
 
@@ -20,8 +21,10 @@ def test_payment_is_idempotent_even_when_replayed_100_times():
     engine = make_engine()
     outcomes = [engine.submit_proposal(make_proposal()) for _ in range(100)]
     assert all(outcome.status == "executed" for outcome in outcomes)
+    assert len(engine.bank.transactions) == 0
+    engine.deliver_contract(outcomes[0].deal_id)
+    for _ in range(100): engine.pay_contract(outcomes[0].deal_id)
     assert len(engine.bank.transactions) == 1
-    assert len(engine.ledger.entries) == 3
     assert engine.ledger.is_balanced()
 
 

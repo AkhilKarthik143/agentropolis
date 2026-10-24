@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { NavLink } from 'react-router-dom';
-import { Activity, Banknote, GitBranch, Hexagon, Landmark, Radio, ShoppingCart, Sparkles, Zap } from 'lucide-react';
+import { Activity, Banknote, GitBranch, Hexagon, Landmark, Radio, ShoppingCart, Sparkles, Store, Zap } from 'lucide-react';
 import { AnimatePresence, MotionConfig, motion } from 'motion/react';
 import { motionTokens } from '@/lib/motion';
 
@@ -12,6 +12,7 @@ const navItems = [
   { href: '/economy/negotiations', label: 'Negotiations', icon: GitBranch },
   { href: '/economy/control-tower', label: 'Control tower', icon: Landmark },
   { href: '/economy/procurement', label: 'Procurement', icon: ShoppingCart },
+  { href: '/economy/businesses', label: 'Businesses', icon: Store },
   { href: '/economy/scenarios', label: 'Shock engine', icon: Zap },
 ];
 
@@ -27,19 +28,19 @@ export function EconomyShell({ children, title, eyebrow, connected, actions }: {
         </div>
         <div className="economy-live"><span className={connected ? 'live-dot live-dot-on' : 'live-dot'} />{connected ? 'Live event stream' : 'Reconnecting…'}</div>
         <nav className="economy-nav" aria-label="Agentropolis">
-          {navItems.map(({ href, label, icon: Icon }) => <NavLink key={href} to={href} className={({ isActive }) => `economy-nav-link ${isActive ? 'active' : ''}`}><Icon size={16} aria-hidden="true" /><span>{label}</span>{label === 'Shock engine' && <span className="economy-nav-count" aria-label="6 scenarios">6</span>}</NavLink>)}
+          {navItems.map(({ href, label, icon: Icon }) => <NavLink key={href} to={href} aria-label={label} className={({ isActive }) => `economy-nav-link ${isActive ? 'active' : ''}`}><Icon size={16} aria-hidden="true" /><span>{label}</span>{label === 'Shock engine' && <span className="economy-nav-count" aria-label="6 scenarios">6</span>}</NavLink>)}
         </nav>
         <div className="economy-sidebar-bottom">
-          <div className="economy-rail-caption">Powered by</div>
-          <div className="economy-sponsor-row"><Radio size={14} aria-hidden="true" /> Fetch.ai transport</div>
-          <div className="economy-sponsor-row"><Banknote size={14} aria-hidden="true" /> Mock bank rail</div>
+          <div className="economy-rail-caption">Execution environment</div>
+          <div className="economy-sponsor-row"><Radio size={14} aria-hidden="true" /> Local agent transport</div>
+          <div className="economy-sponsor-row"><Banknote size={14} aria-hidden="true" /> Simulated bank rail</div>
           <NavLink to="/economy/world" className="economy-back-link">Return to Agentropolis home</NavLink>
         </div>
       </aside>
       <main id="economy-main" className="economy-main">
         <header className="economy-header">
           <div><div className="economy-eyebrow">{eyebrow}</div><h1>{title}</h1></div>
-          <div className="economy-header-actions">{actions}<div className="economy-mode-badge"><Activity size={13} /> MOCK MODE</div></div>
+          <div className="economy-header-actions">{actions}<div className="economy-mode-badge"><Activity size={13} /> SIMULATION</div></div>
         </header>
         {children}
       </main>

@@ -18,6 +18,7 @@ class RiskAgent(BaseBusinessAgent):
         supplier = context.engine.businesses.get(supplier_id)
         if supplier is None or not supplier.active:
             return {"allowed": False, "reason": "supplier unavailable", "supplier_id": supplier_id}
+        injection_allowed = True
         if supplier.supplier_note:
             gate = inspect_proposal(Proposal(
                 type=ProposalType.OFFER,
@@ -31,6 +32,7 @@ class RiskAgent(BaseBusinessAgent):
                 metadata={"supplier_note": supplier.supplier_note},
             ))
             if not gate.allowed:
+                injection_allowed = False
                 context.emit(
                     "ACTION_BLOCKED",
                     business_id=self.business_id,
@@ -38,11 +40,11 @@ class RiskAgent(BaseBusinessAgent):
                     idempotency_key=f"agent-injection-blocked:{self.business_id}:{supplier_id}:{context.engine.clock.day}:{context.engine.clock.tick}",
                 )
         credit = context.engine.credit.check_supplier(supplier_id)
-        supplier.credit_status, supplier.credit_score, supplier.credit_reason = credit.status, credit.score, credit.reason
         context.emit("CRS_CHECKED", business_id=self.business_id, payload={"supplier_id": supplier_id, "status": credit.status, "score": credit.score, "reason": credit.reason, "mode": credit.mode}, idempotency_key=f"agent-crs:{self.business_id}:{supplier_id}:{context.engine.clock.day}:{context.engine.clock.tick}")
         if credit.status == "blocked":
             context.emit("SUPPLIER_BLOCKED", business_id=self.business_id, payload={"supplier_id": supplier_id, "reason": credit.reason, "ledger_free": True, "agent_id": self.agent_id}, idempotency_key=f"agent-supplier-blocked:{self.business_id}:{supplier_id}:{context.engine.clock.day}:{context.engine.clock.tick}")
-        allowed = credit.status != "blocked" and supplier.reliability >= 0.7
+        buyer = context.engine.businesses[self.business_id]
+        allowed = injection_allowed and credit.status != "blocked" and supplier.reliability >= getattr(buyer, "required_reliability", .7)
         return {"allowed": allowed, "reason": "counterparty policy passed" if allowed else "credit or reliability policy failed", "supplier_id": supplier_id, "credit_status": credit.status, "reliability": supplier.reliability}
 
     def review(self, proposal: Proposal, context: Any) -> dict[str, Any]:

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
-from threading import Lock
+from threading import RLock, local
+from contextlib import contextmanager
 
 from .schemas import EventEnvelope
 from .store import EventStore, MemoryStore
@@ -15,7 +16,8 @@ class EventBus:
         self.store = store or MemoryStore()
         self.max_queue = max_queue
         self._subscribers: set[asyncio.Queue[EventEnvelope]] = set()
-        self._lock = Lock()
+        self._lock = RLock()
+        self._local = local()
 
     def append(self, event: EventEnvelope) -> EventEnvelope:
         with self._lock:
@@ -25,6 +27,30 @@ class EventBus:
                     return duplicate
             stored = self.store.append(event)
             subscribers = tuple(self._subscribers)
+        pending = getattr(self._local, "pending", None)
+        if pending is not None:
+            pending.append((stored, subscribers))
+            return stored
+        self._publish(stored, subscribers)
+        return stored
+
+    @contextmanager
+    def defer_notifications(self):
+        if getattr(self._local, "pending", None) is not None:
+            yield
+            return
+        self._local.pending = []
+        try:
+            yield
+            pending = self._local.pending
+        except BaseException:
+            self._local.pending = None
+            raise
+        self._local.pending = None
+        for event, subscribers in pending:
+            self._publish(event, subscribers)
+
+    def _publish(self, stored, subscribers):
         for queue in subscribers:
             try:
                 queue.put_nowait(stored)
@@ -34,7 +60,13 @@ class EventBus:
                 except asyncio.QueueEmpty:
                     pass
                 try:
-                    queue.put_nowait(EventEnvelope(type="resync", seq=stored.seq, payload={"since": max(0, stored.seq - self.max_queue)}))
+                    queue.put_nowait(
+                        EventEnvelope(
+                            type="resync",
+                            seq=stored.seq,
+                            payload={"since": max(0, stored.seq - self.max_queue)},
+                        )
+                    )
                 except asyncio.QueueFull:
                     pass
         return stored
@@ -50,8 +82,15 @@ class EventBus:
             backlog = self.store.since(since)
             if len(backlog) > self.max_queue:
                 latest = backlog[-1]
-                queue.put_nowait(EventEnvelope(type="resync", seq=latest.seq, session_id=latest.session_id, payload={"since": max(0, latest.seq - self.max_queue)}))
-                backlog = backlog[-(self.max_queue - 1):] if self.max_queue > 1 else []
+                queue.put_nowait(
+                    EventEnvelope(
+                        type="resync",
+                        seq=latest.seq,
+                        session_id=latest.session_id,
+                        payload={"since": max(0, latest.seq - self.max_queue)},
+                    )
+                )
+                backlog = backlog[-(self.max_queue - 1) :] if self.max_queue > 1 else []
             for event in backlog:
                 queue.put_nowait(event)
             self._subscribers.add(queue)
@@ -60,4 +99,3 @@ class EventBus:
                 yield await queue.get()
         finally:
             self._subscribers.discard(queue)
-

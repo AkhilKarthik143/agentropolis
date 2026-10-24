@@ -16,7 +16,7 @@ class PaymentsAgent(BaseBusinessAgent):
 
     def submit(self, proposal: Proposal, context: AgentContext) -> None:
         self.status = "working"
-        outcome = context.engine.submit_proposal(proposal)
+        outcome = context.submit_purchase(self.agent_id, proposal)
         self.decisions += 1
         context.record_action(outcome.as_dict())
         context.emit(
@@ -34,4 +34,9 @@ class PaymentsAgent(BaseBusinessAgent):
         if message.message_type is not AgentMessageType.ACTION_PROPOSAL:
             return
         proposal = Proposal.model_validate(message.payload["proposal"])
+        if message.sender_id != f"treasury_agent:{self.business_id}" or not message.payload.get("risk_review", {}).get("allowed"):
+            raise PermissionError("purchase requires the treasury and risk workflow")
         self.submit(proposal, context)
+        if message.payload.get("task_id"):
+            outcome = context.actions[-1]
+            context.registry.store.update_task(message.payload["task_id"], "completed" if outcome["status"] == "executed" else "waiting" if outcome["status"] == "approval_required" else "failed", outcome)

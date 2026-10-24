@@ -72,25 +72,24 @@ class GatewayService:
             runtime = get_runtime()
         engine = runtime.engine
         before = len(engine.bus.replay())
-        messages = [
-            "TYPE=stage\nSTAGE=request\nTEXT=Parsed a coffee inventory request for Lumen Coffee Co.",
-            "TYPE=stage\nSTAGE=discovery\nTEXT=Discovered three local supplier agents and one CRS-blocked supplier.",
-        ]
+        messages = [f"TYPE=stage\nSTAGE=request\nTEXT=Parsed a simulation request for {request['business_id']}; decision_source={self.llm.last_decision_source}."]
         engine.tick()
-        messages.extend([
-            "TYPE=stage\nSTAGE=negotiation\nTEXT=Typed offers were compared with a Claude-compatible structured decision and deterministic policy fallback.",
-            "TYPE=stage\nSTAGE=treasury\nTEXT=Treasury/risk checked reserve, spend limit, reliability, and approval requirements.",
-            "TYPE=stage\nSTAGE=x402\nTEXT=Supplier-intelligence reliability reports were paid through the x402 mock rail with capped receipts.",
-            "TYPE=stage\nSTAGE=finance\nTEXT=PO, goods receipt, supplier invoice, three-way match, payment, and balanced ledger records are available.",
-        ])
         if request["request_shock"]:
             engine.shock("supplier_bankruptcy", supplier_id="northstar_roasters")
-            messages.append("TYPE=stage\nSTAGE=recovery\nTEXT=Supplier bankruptcy triggered replacement sourcing and inventory recovery.")
         events = engine.bus.replay(before)
-        blocked = any(event.type == "ACTION_BLOCKED" for event in events)
+        event_types = {event.type for event in events}
+        messages.extend([
+            f"TYPE=stage\nSTAGE=discovery\nTEXT=Local supplier discovery; observed_events={len(events)}. Agentverse connectivity has not been verified.",
+            f"TYPE=stage\nSTAGE=negotiation\nTEXT=Agent negotiation and policy results are in the session event log; reasoning_source={engine.llm.last_decision_source}.",
+            "TYPE=stage\nSTAGE=treasury\nTEXT=Authoritative treasury, approvals and finance outcomes are recorded per action; no blanket approval is inferred.",
+            "TYPE=stage\nSTAGE=x402\nTEXT=External x402 settlement is not active in this simulation. The optional guarded testnet HTTP client requires separate configuration and authorization.",
+        ])
+        if request["request_shock"]:
+            messages.append("TYPE=stage\nSTAGE=recovery\nTEXT=Supplier bankruptcy was submitted; inspect recorded recovery proposals and outcomes in this session.")
+        blocked = "ACTION_BLOCKED" in event_types
         proof = engine.ledger.proof(request["business_id"])
         audit = engine.audit_verification()
-        messages.append(f"TYPE=result\nTEXT=Session {runtime.session_id} completed; ledger_balanced={proof['balanced']}; audit_valid={audit['valid']}; security_blocked={blocked}.")
+        messages.append(f"TYPE=result\nTEXT=Session {runtime.session_id} processed; ledger_balanced={proof['balanced']}; audit_valid={audit['valid']}; security_blocked={blocked}; external_payments_verified=False.")
         return GatewayResult(runtime.session_id, tuple(messages), "local")
 
 

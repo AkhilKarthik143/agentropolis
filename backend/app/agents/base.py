@@ -44,6 +44,7 @@ class AgentContext:
         payload: dict[str, Any],
         correlation_id: str | None = None,
         idempotency_key: str | None = None,
+        ttl: int = 12,
     ) -> bool:
         message = AgentMessage(
             message_type=message_type,
@@ -55,13 +56,30 @@ class AgentContext:
             payload=payload,
             idempotency_key=idempotency_key or f"msg:{uuid4().hex}",
         )
-        return self.registry.send(message, self)
+        return self.registry.send(message, self, ttl=ttl)
 
     def emit(self, event_type: str, *, business_id: str | None = None, deal_id: str | None = None, proposal: Proposal | None = None, payload: dict[str, Any] | None = None, idempotency_key: str | None = None) -> None:
         self.engine._emit(event_type, business_id, deal_id, proposal=proposal, payload=payload, idempotency_key=idempotency_key)
 
     def record_action(self, action: dict[str, Any]) -> None:
         self.actions.append(action)
+
+    def require(self, agent_id: str, permission: str, business_id: str | None = None) -> None:
+        self.registry.require(agent_id, permission, business_id)
+
+    def submit_purchase(self, agent_id: str, proposal: Proposal) -> Any:
+        self.require(agent_id, "submit_approved_payment", proposal.business_id)
+        return self.engine.submit_proposal(proposal.model_copy(update={"agent_id":agent_id}))
+
+    def remember(self, agent_id: str, key: str, value: Any) -> None:
+        if self.registry.active_agent_id not in {None, agent_id}:
+            raise PermissionError("private memory belongs to another agent")
+        self.registry.store.remember(agent_id, key, value)
+
+    def recall(self, agent_id: str, key: str, default: Any = None) -> Any:
+        if self.registry.active_agent_id not in {None, agent_id}:
+            raise PermissionError("private memory belongs to another agent")
+        return self.registry.store.recall(agent_id, key, default)
 
 
 class BaseBusinessAgent:
@@ -109,6 +127,8 @@ class BaseBusinessAgent:
             "last_task_id": self.last_task_id,
             "handled_messages": self.handled_messages,
             "decisions": self.decisions,
+            "decision_mode": "deterministic_policy",
+            "memory": "durable_session_scoped",
         }
 
     def handle_message(self, message: AgentMessage, context: AgentContext) -> None:

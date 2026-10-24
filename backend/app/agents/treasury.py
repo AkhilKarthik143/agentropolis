@@ -43,5 +43,7 @@ class TreasuryAgent(BaseBusinessAgent):
                 return
         payments = context.registry.by_role(self.business_id, "payments")
         if payments and decision["decision"] != "REJECT":
-            payments.handle_message(message, context)
+            context.send(message_type=AgentMessageType.ACTION_PROPOSAL, sender_id=self.agent_id, recipient_id=payments.agent_id, business_id=self.business_id, correlation_id=message.correlation_id, payload={**message.payload, "treasury_review": decision, "risk_review": risk_result if risk else {"allowed": False}}, idempotency_key=f"authorized-proposal:{proposal.idempotency_key}")
+        elif message.payload.get("task_id"):
+            context.registry.store.update_task(message.payload["task_id"], "failed", decision)
 

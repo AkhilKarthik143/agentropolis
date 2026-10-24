@@ -29,6 +29,19 @@ class AgentMessageType(StrEnum):
     ACTION_PROPOSAL = "ACTION_PROPOSAL"
     ACTION_RESULT = "ACTION_RESULT"
     ACK = "ACK"
+    OFFER_ACCEPTED = "OFFER_ACCEPTED"
+    OFFER_REJECTED = "OFFER_REJECTED"
+    NEGOTIATION_EXPIRED = "NEGOTIATION_EXPIRED"
+    CONTRACT_PROPOSED = "CONTRACT_PROPOSED"
+    CONTRACT_APPROVED = "CONTRACT_APPROVED"
+    PAYMENT_REQUESTED = "PAYMENT_REQUESTED"
+    PAYMENT_CONFIRMED = "PAYMENT_CONFIRMED"
+    PAYMENT_FAILED = "PAYMENT_FAILED"
+    GOODS_SHIPPED = "GOODS_SHIPPED"
+    GOODS_RECEIVED = "GOODS_RECEIVED"
+    SUPPLIER_UNAVAILABLE = "SUPPLIER_UNAVAILABLE"
+    RECOVERY_REQUESTED = "RECOVERY_REQUESTED"
+    RISK_ALERT = "RISK_ALERT"
 
 
 class AgentTaskStatus(StrEnum):
@@ -37,11 +50,15 @@ class AgentTaskStatus(StrEnum):
     WAITING = "waiting"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
+    TIMED_OUT = "timed_out"
 
 
 class AgentMessage(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    schema_version: int = 1
+    expires_at: datetime | None = None
     message_id: str = Field(default_factory=lambda: f"msg_{uuid4().hex[:12]}")
     message_type: AgentMessageType = AgentMessageType.ACK
     sender_id: str
@@ -84,12 +101,12 @@ class Proposal(BaseModel):
     rationale: str = ""
     public_rationale: str = ""
     private_rationale: str = ""
-    quantity: int | None = None
+    quantity: int | None = Field(default=None, strict=True)
     unit: str | None = None
-    unit_price_cents: int | None = None
-    delivery_days: int | None = None
+    unit_price_cents: int | None = Field(default=None, strict=True)
+    delivery_days: int | None = Field(default=None, strict=True)
     payment_terms: str | None = None
-    total_cents: int | None = None
+    total_cents: int | None = Field(default=None, strict=True)
     item: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 

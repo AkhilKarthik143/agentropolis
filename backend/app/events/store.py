@@ -1,12 +1,20 @@
+"""Hash-chained events and atomic economic snapshots.
+
+SQLite BEGIN IMMEDIATE protects sequence assignment and command snapshots across
+processes. An engine command writes its events and state in the same transaction.
+"""
+
 from __future__ import annotations
 
+import copy
 import json
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
-from threading import Lock
-from typing import Iterable, Protocol
+from threading import RLock, local
+from typing import Protocol
 
-from .audit import GENESIS_HASH, hash_event, with_integrity
+from .audit import GENESIS_HASH, with_integrity
 from .schemas import EventEnvelope
 from app.database.migrations import apply_migrations
 
@@ -22,13 +30,32 @@ class MemoryStore:
     def __init__(self) -> None:
         self.events: list[EventEnvelope] = []
         self._idempotency: dict[str, EventEnvelope] = {}
-        self._lock = Lock()
+        self._lock = RLock()
+        self.states: dict[str, dict] = {}
+        self.revision: dict[str, int] = {}
+
+    @contextmanager
+    def atomic(self):
+        with self._lock:
+            checkpoint = copy.deepcopy(
+                (self.events, self._idempotency, self.states, self.revision)
+            )
+            try:
+                yield self
+            except BaseException:
+                self.events, self._idempotency, self.states, self.revision = checkpoint
+                raise
 
     def append(self, event: EventEnvelope) -> EventEnvelope:
         with self._lock:
-            seq = len(self.events) + 1
-            previous = self.events[-1].hash if self.events else GENESIS_HASH
-            stored = with_integrity(event, seq=seq, prev_hash=previous or GENESIS_HASH)
+            if event.idempotency_key in self._idempotency:
+                return self._idempotency[event.idempotency_key]
+            stored = with_integrity(
+                event,
+                seq=len(self.events) + 1,
+                prev_hash=(self.events[-1].hash if self.events else GENESIS_HASH)
+                or GENESIS_HASH,
+            )
             self.events.append(stored)
             if stored.idempotency_key:
                 self._idempotency[stored.idempotency_key] = stored
@@ -43,98 +70,159 @@ class MemoryStore:
     def all(self) -> list[EventEnvelope]:
         return list(self.events)
 
+    def load_state(self, session_id: str):
+        state = self.states.get(session_id)
+        return (
+            (self.revision[session_id], copy.deepcopy(state))
+            if state is not None
+            else None
+        )
+
+    def save_state(self, session_id: str, payload: dict) -> int:
+        self.revision[session_id] = self.revision.get(session_id, 0) + 1
+        self.states[session_id] = copy.deepcopy(payload)
+        return self.revision[session_id]
+
 
 class SqliteStore:
-    """Small offline-durable store; all writes are serialized in one transaction."""
-
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = Lock()
+        self._lock = RLock()
+        self._local = local()
         apply_migrations(self.path)
-        with sqlite3.connect(self.path) as conn:
-            conn.execute(
-                """CREATE TABLE IF NOT EXISTS economy_events (
-                    seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                    ts TEXT NOT NULL,
-                    type TEXT NOT NULL,
-                    session_id TEXT,
-                    business_id TEXT,
-                    deal_id TEXT,
-                    correlation_id TEXT,
-                    causation_id TEXT,
-                    idempotency_key TEXT UNIQUE,
-                    payload TEXT NOT NULL,
-                    prev_hash TEXT,
-                    hash TEXT
-                )"""
-            )
-            columns = {row[1] for row in conn.execute("PRAGMA table_info(economy_events)")}
-            if "session_id" not in columns:
-                conn.execute("ALTER TABLE economy_events ADD COLUMN session_id TEXT")
-            if "prev_hash" not in columns:
-                conn.execute("ALTER TABLE economy_events ADD COLUMN prev_hash TEXT")
-            if "hash" not in columns:
-                conn.execute("ALTER TABLE economy_events ADD COLUMN hash TEXT")
-            self._backfill_integrity(conn)
-
-    def _backfill_integrity(self, conn: sqlite3.Connection) -> None:
-        """One-time migration for Stage 1 rows created before hash chaining."""
-
-        rows = conn.execute(
-            "SELECT seq, ts, type, session_id, business_id, deal_id, correlation_id, causation_id, idempotency_key, payload, prev_hash, hash FROM economy_events ORDER BY seq"
-        ).fetchall()
-        previous = GENESIS_HASH
-        for row in rows:
-            event = self._row(row)
-            if event.prev_hash and event.hash:
+        with self.connection() as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(economy_events)")
+            }
+            for name in ("session_id", "prev_hash", "hash"):
+                if name not in columns:
+                    conn.execute(f"ALTER TABLE economy_events ADD COLUMN {name} TEXT")
+            previous = GENESIS_HASH
+            for row in conn.execute(
+                "SELECT seq,ts,type,session_id,business_id,deal_id,correlation_id,causation_id,idempotency_key,payload,prev_hash,hash FROM economy_events ORDER BY seq"
+            ).fetchall():
+                event = self._row(row)
+                if not event.hash:
+                    event = with_integrity(event, seq=event.seq, prev_hash=previous)
+                    conn.execute(
+                        "UPDATE economy_events SET prev_hash=?,hash=? WHERE seq=?",
+                        (event.prev_hash, event.hash, event.seq),
+                    )
                 previous = event.hash
-                continue
-            prepared = with_integrity(event, seq=event.seq, prev_hash=previous)
-            conn.execute("UPDATE economy_events SET prev_hash = ?, hash = ? WHERE seq = ?", (prepared.prev_hash, prepared.hash, prepared.seq))
-            previous = prepared.hash or previous
+
+    @contextmanager
+    def connection(self):
+        current = getattr(self._local, "connection", None)
+        if current is not None:
+            yield current
+            return
+        conn = sqlite3.connect(self.path, timeout=30)
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
+
+    @contextmanager
+    def atomic(self):
+        with self._lock:
+            if getattr(self._local, "connection", None) is not None:
+                yield self
+                return
+            with self.connection() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                self._local.connection = conn
+                try:
+                    yield self
+                finally:
+                    self._local.connection = None
 
     @staticmethod
-    def _row(row: tuple) -> EventEnvelope:
+    def _row(row):
         return EventEnvelope(
-            seq=row[0], ts=row[1], type=row[2], session_id=row[3], business_id=row[4], deal_id=row[5],
-            correlation_id=row[6], causation_id=row[7], idempotency_key=row[8],
-            payload=json.loads(row[9]), prev_hash=row[10], hash=row[11],
+            seq=row[0],
+            ts=row[1],
+            type=row[2],
+            session_id=row[3],
+            business_id=row[4],
+            deal_id=row[5],
+            correlation_id=row[6],
+            causation_id=row[7],
+            idempotency_key=row[8],
+            payload=json.loads(row[9]),
+            prev_hash=row[10],
+            hash=row[11],
         )
 
     def append(self, event: EventEnvelope) -> EventEnvelope:
-        with self._lock, sqlite3.connect(self.path) as conn:
-            previous_row = conn.execute("SELECT hash FROM economy_events ORDER BY seq DESC LIMIT 1").fetchone()
-            previous = (previous_row[0] if previous_row and previous_row[0] else GENESIS_HASH)
-            seq = int(conn.execute("SELECT COALESCE(MAX(seq), 0) + 1 FROM economy_events").fetchone()[0])
-            stored = with_integrity(event, seq=seq, prev_hash=previous)
-            cursor = conn.execute(
-                """INSERT INTO economy_events
-                (ts, type, session_id, business_id, deal_id, correlation_id, causation_id, idempotency_key, payload, prev_hash, hash)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (stored.ts.isoformat(), stored.type, stored.session_id, stored.business_id, stored.deal_id,
-                 stored.correlation_id, stored.causation_id, stored.idempotency_key,
-                 json.dumps(stored.payload, sort_keys=True), stored.prev_hash, stored.hash),
+        with self.atomic(), self.connection() as conn:
+            if event.idempotency_key:
+                duplicate = self.get_by_idempotency(event.idempotency_key)
+                if duplicate:
+                    return duplicate
+            last = conn.execute(
+                "SELECT seq,hash FROM economy_events ORDER BY seq DESC LIMIT 1"
+            ).fetchone()
+            stored = with_integrity(
+                event,
+                seq=last[0] + 1 if last else 1,
+                prev_hash=last[1] if last else GENESIS_HASH,
             )
-            seq = cursor.lastrowid
-        return stored.model_copy(update={"seq": int(seq)})
+            conn.execute(
+                "INSERT INTO economy_events(seq,ts,type,session_id,business_id,deal_id,correlation_id,causation_id,idempotency_key,payload,prev_hash,hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    stored.seq,
+                    stored.ts.isoformat(),
+                    stored.type,
+                    stored.session_id,
+                    stored.business_id,
+                    stored.deal_id,
+                    stored.correlation_id,
+                    stored.causation_id,
+                    stored.idempotency_key,
+                    json.dumps(stored.payload, sort_keys=True),
+                    stored.prev_hash,
+                    stored.hash,
+                ),
+            )
+            return stored
 
     def get_by_idempotency(self, key: str) -> EventEnvelope | None:
-        with sqlite3.connect(self.path) as conn:
+        with self.connection() as conn:
             row = conn.execute(
-                "SELECT seq, ts, type, session_id, business_id, deal_id, correlation_id, causation_id, idempotency_key, payload, prev_hash, hash FROM economy_events WHERE idempotency_key = ?",
+                "SELECT seq,ts,type,session_id,business_id,deal_id,correlation_id,causation_id,idempotency_key,payload,prev_hash,hash FROM economy_events WHERE idempotency_key=?",
                 (key,),
             ).fetchone()
         return self._row(row) if row else None
 
     def since(self, seq: int = 0) -> list[EventEnvelope]:
-        with sqlite3.connect(self.path) as conn:
+        with self.connection() as conn:
             rows = conn.execute(
-                "SELECT seq, ts, type, session_id, business_id, deal_id, correlation_id, causation_id, idempotency_key, payload, prev_hash, hash FROM economy_events WHERE seq > ? ORDER BY seq",
+                "SELECT seq,ts,type,session_id,business_id,deal_id,correlation_id,causation_id,idempotency_key,payload,prev_hash,hash FROM economy_events WHERE seq>? ORDER BY seq",
                 (seq,),
             ).fetchall()
         return [self._row(row) for row in rows]
 
-    def all(self) -> list[EventEnvelope]:
-        return self.since(0)
+    def all(self):
+        return self.since()
 
+    def load_state(self, session_id: str):
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT version,payload FROM economic_snapshots WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
+        return (row[0], json.loads(row[1])) if row else None
+
+    def save_state(self, session_id: str, payload: dict) -> int:
+        with self.connection() as conn:
+            conn.execute(
+                "INSERT INTO economic_snapshots(session_id,version,payload) VALUES(?,1,?) ON CONFLICT(session_id) DO UPDATE SET version=version+1,payload=excluded.payload",
+                (session_id, json.dumps(payload, sort_keys=True)),
+            )
+            return conn.execute(
+                "SELECT version FROM economic_snapshots WHERE session_id=?",
+                (session_id,),
+            ).fetchone()[0]

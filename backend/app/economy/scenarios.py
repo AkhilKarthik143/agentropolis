@@ -3,7 +3,7 @@ from __future__ import annotations
 from .engine import EconomyEngine
 
 
-SUPPORTED_SHOCKS = ("supplier_bankruptcy", "demand_spike", "shortage", "suspicious_invoice", "failed_payment", "liquidity_crisis")
+SUPPORTED_SHOCKS = ("supplier_bankruptcy", "demand_spike", "shortage", "suspicious_invoice", "failed_payment", "liquidity_crisis", "delivery_failure", "inventory_shortage", "payment_failure")
 
 
 def inject(engine: EconomyEngine, shock_type: str, supplier_id: str | None = None) -> dict:

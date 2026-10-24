@@ -38,13 +38,13 @@ LEGAL_TRANSITIONS: dict[EconomyState, frozenset[EconomyState]] = {
     EconomyState.TREASURY_CHECK: frozenset({EconomyState.APPROVED, EconomyState.REJECTED, EconomyState.CONTRACTED}),
     EconomyState.APPROVED: frozenset({EconomyState.CONTRACTED}),
     EconomyState.REJECTED: frozenset({EconomyState.NEGOTIATING}),
-    EconomyState.CONTRACTED: frozenset({EconomyState.PAYMENT_RECORDED}),
+    EconomyState.CONTRACTED: frozenset({EconomyState.PAYMENT_RECORDED, EconomyState.AWAITING_DELIVERY}),
     EconomyState.PAYMENT_RECORDED: frozenset({EconomyState.AWAITING_DELIVERY, EconomyState.DELIVERED}),
     EconomyState.AWAITING_DELIVERY: frozenset({EconomyState.DELIVERED, EconomyState.SUPPLIER_BANKRUPT, EconomyState.RECOVERED}),
-    EconomyState.DELIVERED: frozenset(),
+    EconomyState.DELIVERED: frozenset({EconomyState.PAYMENT_RECORDED, EconomyState.RECOVERED}),
     EconomyState.SUPPLIER_BANKRUPT: frozenset({EconomyState.RECOVERY_NEGOTIATION}),
     EconomyState.RECOVERY_NEGOTIATION: frozenset({EconomyState.REPLACEMENT_CONTRACT}),
-    EconomyState.REPLACEMENT_CONTRACT: frozenset({EconomyState.PAYMENT_RECORDED, EconomyState.RECOVERED}),
+    EconomyState.REPLACEMENT_CONTRACT: frozenset({EconomyState.PAYMENT_RECORDED, EconomyState.RECOVERED, EconomyState.AWAITING_DELIVERY}),
     EconomyState.RECOVERED: frozenset(),
 }
 

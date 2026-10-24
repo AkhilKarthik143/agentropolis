@@ -23,7 +23,7 @@ class InProcessTransport:
 
 
 class FetchTransport(InProcessTransport):
-    """Fetch.ai wire-compatible fallback. Network registration is opt-in."""
+    """Legacy local queue only. Use BusinessAgentEndpoint for actual uAgents messaging."""
 
-    mode = "fetch"
+    mode = "local_fetch_envelope"
 

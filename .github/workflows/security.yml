@@ -1,0 +1,29 @@
+name: Security checks
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  source-safety:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Reject tracked environment files
+        shell: bash
+        run: |
+          if git ls-files | grep -Eq '(^|/)\.env$'; then
+            echo 'A private .env file is tracked.' >&2
+            exit 1
+          fi
+      - name: Reject common credential patterns
+        shell: bash
+        run: |
+          if git grep -nE -e '-----BEGIN [A-Z ]*PRIVATE KEY-----|(^|[^A-Za-z0-9_-])sk-(ant-|proj-)?[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{36}|xox[abprs]-[A-Za-z0-9-]{10,}' -- ':!*.lock'; then
+            echo 'A credential-like pattern was found.' >&2
+            exit 1
+          fi
+      - name: Validate Python syntax
+        run: python3 -m compileall -q backend/app scripts

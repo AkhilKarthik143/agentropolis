@@ -126,7 +126,7 @@ class FinanceControls:
             existing = next((item for item in self.invoices if item.invoice_id == invoice.invoice_id), None)
             if existing:
                 return existing
-            if any(item.invoice_number == invoice.invoice_number for item in self.invoices):
+            if any(item.invoice_number == invoice.invoice_number and item.supplier_id == invoice.supplier_id for item in self.invoices):
                 raise FinanceControlError("duplicate supplier invoice number")
             self.invoices.append(invoice)
         return invoice
@@ -138,6 +138,10 @@ class FinanceControls:
         if not po or not receipt or not invoice:
             raise FinanceControlError("three-way match requires a PO, receipt, and invoice")
         reasons: list[str] = []
+        if receipt.po_id != po.po_id:
+            reasons.append("receipt references a different purchase order")
+        if invoice.supplier_id != po.supplier_id:
+            reasons.append("invoice supplier differs from purchase order")
         if invoice.po_id != po.po_id:
             reasons.append("invoice references a different purchase order")
         if invoice.amount_cents != po.total_cents:

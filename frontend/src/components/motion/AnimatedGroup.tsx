@@ -22,7 +22,7 @@ export function AnimatedGroup({ children, className, preset = 'slide' }: Animate
   return (
     <motion.div
       className={className}
-      initial="hidden"
+      initial={reducedMotion ? false : "hidden"}
       animate="visible"
       variants={{ visible: { transition: { staggerChildren: reducedMotion ? 0 : 0.06 } } }}
     >

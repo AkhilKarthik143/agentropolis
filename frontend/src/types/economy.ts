@@ -65,9 +65,17 @@ export type EconomyContract = {
   rationale: string;
   reliability: number;
   state?: string;
+  fulfillment_state?: string;
+  payment_state?: string;
+  received_quantity?: number;
+  reserved_quantity?: number;
+  unit?: string;
+  payment_id?: string;
 };
 
 export type EconomyOffer = {
+  business_id?: string;
+  negotiation_id?: string;
   supplier_id: string;
   score: number;
   offer: {
@@ -104,6 +112,9 @@ export type FinanceMatch = { match_id: string; po_id: string; invoice_id: string
 export type FinanceSnapshot = { purchase_orders: FinancePurchaseOrder[]; receipts: Record<string, unknown>[]; invoices: FinanceInvoice[]; matches: FinanceMatch[] };
 
 export type EconomySummary = {
+  payments?: Array<Record<string, unknown>>;
+  reconciliation?: Array<Record<string, unknown>> | Record<string, unknown>;
+  clock_control?: { paused: boolean; speed: number; tick: number; day: number };
   simulation_id?: string;
   status?: string;
   mode: string;

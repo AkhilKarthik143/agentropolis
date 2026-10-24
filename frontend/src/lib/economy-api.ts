@@ -26,3 +26,14 @@ export const triggerShock = (shockType: string, supplierId?: string) => request<
 export const decideApproval = (approvalId: string, approved: boolean, approver = 'human_operator') => request<Record<string, unknown>>(`/approvals/${approvalId}`, { method: 'POST', body: JSON.stringify({ approved, approver }) });
 export const replayEconomy = () => request<Record<string, unknown>>('/replay', { method: 'POST' });
 
+
+export type BusinessInput = {
+  name: string; kind: string; role: string; objective: string; cash_cents: number;
+  reserve_cents: number; spend_limit_cents: number; agent_roles: string[];
+  inventory_item?: string; low_stock_threshold?: number;
+};
+export const createBusiness = (input: BusinessInput) => request<{ business: import('@/types/economy').EconomyBusiness }>('/businesses', { method: 'POST', body: JSON.stringify(input) });
+export const updateBusiness = (id: string, input: Partial<BusinessInput> & { active?: boolean }) => request<Record<string, unknown>>(`/businesses/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) });
+export const controlSimulation = (action: 'tick' | 'pause' | 'resume' | 'reset' | 'speed', speed?: number) => request<Record<string, unknown>>(`/${action}`, { method: 'POST', body: speed === undefined ? undefined : JSON.stringify({ speed }) });
+export const progressContract = (id: string, action: 'ship' | 'deliver' | 'pay') => request<Record<string, unknown>>(`/contracts/${encodeURIComponent(id)}/${action}`, { method: 'POST' });
+export const reconcilePayment = (id: string) => request<Record<string, unknown>>(`/payments/${encodeURIComponent(id)}/reconcile`, { method: 'POST' });

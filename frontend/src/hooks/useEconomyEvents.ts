@@ -5,7 +5,7 @@ import type { EconomyEvent, EconomySummary } from '@/types/economy';
 function mergeEvents(current: EconomyEvent[], incoming: EconomyEvent[]) {
   const bySeq = new Map(current.map((event) => [event.seq, event]));
   incoming.filter((event) => event.type !== 'heartbeat').forEach((event) => bySeq.set(event.seq, event));
-  return [...bySeq.values()].sort((a, b) => a.seq - b.seq);
+  return [...bySeq.values()].sort((a, b) => a.seq - b.seq).slice(-600);
 }
 
 export function useEconomyEvents() {
@@ -20,7 +20,7 @@ export function useEconomyEvents() {
     try {
       const [nextSummary, nextEvents] = await Promise.all([getEconomySummary(), getEconomyEvents(0)]);
       setSummary(nextSummary);
-      setEvents(nextEvents);
+      setEvents(nextEvents.slice(-600));
       lastSeq.current = nextEvents.at(-1)?.seq ?? 0;
       setError(null);
     } catch (caught) {
@@ -38,6 +38,7 @@ export function useEconomyEvents() {
     let socket: WebSocket | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
     let cancelled = false;
+    let summaryTimer: ReturnType<typeof setTimeout> | undefined;
 
     const connect = () => {
       if (cancelled) return;
@@ -53,7 +54,10 @@ export function useEconomyEvents() {
         }
         lastSeq.current = Math.max(lastSeq.current, event.seq ?? 0);
         setEvents((current) => mergeEvents(current, [event]));
-        void getEconomySummary().then(setSummary).catch(() => undefined);
+        if (!summaryTimer) summaryTimer = setTimeout(() => {
+          summaryTimer = undefined;
+          void getEconomySummary().then(setSummary).catch(() => undefined);
+        }, 180);
       };
       socket.onclose = () => {
         setConnected(false);
@@ -66,6 +70,7 @@ export function useEconomyEvents() {
     return () => {
       cancelled = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (summaryTimer) clearTimeout(summaryTimer);
       socket?.close();
     };
   }, [refresh]);

@@ -23,6 +23,7 @@ class ApprovalRequest:
     reason: str = ""
     poster: str | None = None
     decision_state: str = "PENDING"
+    terms_hash: str = ""
 
 
 class ApprovalError(ValueError):

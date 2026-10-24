@@ -16,6 +16,8 @@ class Account(StrEnum):
     COGS = "COGS"
     WRITE_OFF = "Write-offs/Fraud loss"
     FEES = "Fees"
+    SERVICE_EXPENSE = "Service Expenses"
+    PREPAYMENT = "Prepayments"
 
 
 @dataclass(frozen=True)
@@ -48,13 +50,18 @@ class Ledger:
         self._lock = Lock()
 
     def post(self, entry: JournalEntry) -> JournalEntry:
-        if not entry.lines:
+        if len(entry.lines) < 2:
             raise LedgerError("journal entry must contain at least two lines")
         if sum(line.amount_cents for line in entry.lines) != 0:
             raise LedgerError("journal entry is not balanced")
-        if any(not isinstance(line.amount_cents, int) for line in entry.lines):
+        if any(type(line.amount_cents) is not int for line in entry.lines):
             raise LedgerError("ledger amounts must be integer cents")
+        entities = {line.business_id for line in entry.lines}
+        if any(sum(line.amount_cents for line in entry.lines if line.business_id == entity) != 0 for entity in entities):
+            raise LedgerError("journal must balance independently for each accounting entity")
         with self._lock:
+            if any(item.entry_id == entry.entry_id and item != entry for item in self.entries):
+                raise LedgerError("journal identity reused with different contents")
             if entry.idempotency_key and entry.idempotency_key in self._by_idempotency:
                 return self._by_idempotency[entry.idempotency_key]
             self.entries.append(entry)

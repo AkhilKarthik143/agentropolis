@@ -14,6 +14,8 @@ class ContractStatus(StrEnum):
     INVOICED = "invoiced"
     PAID = "paid"
     DEFAULTED = "defaulted"
+    CANCELLED = "cancelled"
+    PARTIAL = "partially_fulfilled"
 
 
 @dataclass
@@ -31,8 +33,22 @@ class Contract:
     rationale: str
     reliability: float
     state: EconomyState = EconomyState.PAYMENT_RECORDED
-    delivery_mode: str = "immediate"
+    delivery_mode: str = "on_receipt"
     delivered_quantity: int = 0
+    unit: str = "unit"
+    created_tick: int = 0
+    due_tick: int = 0
+    reservation_id: str = ""
+    fulfillment_state: str = "RESERVED"
+    payment_state: str = "APPROVED"
+    payment_id: str = ""
+    po_id: str = ""
+    invoice_id: str = ""
+    receipt_id: str = ""
+    approved_terms_hash: str = ""
+    recovery: bool = False
+    kind: str = "physical"
+    cost_price_cents: int = 0
 
     def transition(self, status: ContractStatus) -> None:
         allowed = {

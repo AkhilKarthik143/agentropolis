@@ -33,22 +33,16 @@ def test_state_machine_has_explicit_approval_rejection_and_recovery_terminal():
     assert not can_transition(EconomyState.RECOVERED, EconomyState.CONTRACTED)
 
 
-def test_finance_mismatch_parks_for_human_and_approval_resolves_it():
-    engine = make_small_engine()
-    proposal = Proposal(
-        type=ProposalType.OFFER, proposal_id="invoice-bad", idempotency_key="invoice-bad",
-        agent_id="procurement", business_id="buyer", counterparty_id="seller", item="beans",
-        quantity=2, unit_price_cents=1_000, total_cents=2_000,
-        metadata={"invoice_total_cents": 2_500},
-    )
-    pending = engine.submit_proposal(proposal)
-    assert pending.status == "approval_required"
-    assert engine.approvals.snapshot()[0]["decision_state"] == "NEEDS_HUMAN"
-    assert {event.type for event in engine.bus.replay()} >= {"InvoiceMismatch", "RECORD_CONFLICT", "ACTION_BLOCKED", "ApprovalRequested"}
-    resolved = engine.resolve_approval(pending.approval_id or "", "human_operator", True)
-    assert resolved.status == "executed"
-    assert any(event.type == "RECORD_CONFLICT_RESOLVED" for event in engine.bus.replay())
-    assert engine.ledger.proof("buyer")["balanced"] is True
+def test_finance_mismatch_parks_payment_without_fabricating_a_correction():
+    runtime=EconomyRuntime(store_mode="memory")
+    engine=runtime.engine
+    engine.deliver_contract("deal_beans_001")
+    engine.shock("suspicious_invoice")
+    with pytest.raises(ValueError,match="held"):
+        engine.pay_contract("deal_beans_001")
+    assert not engine.bank.history()
+    assert any(event.type=="InvoiceMismatch" for event in engine.bus.replay())
+    assert engine.ledger.proof("cafe_lumen")["balanced"]
 
 
 def test_role_assignment_rejects_duplicate_identities():
@@ -96,5 +90,5 @@ def test_gateway_returns_session_and_recovery_summary():
     assert result.session_id == runtime.session_id
     assert any("STAGE=recovery" in message for message in result.messages)
     assert any("STAGE=x402" in message for message in result.messages)
-    assert any(event.type == "X402_SUPPLIER_INTELLIGENCE_PAID" for event in runtime.engine.bus.replay())
+    assert any("External x402 settlement is not active" in message for message in result.messages)
     assert any("ledger_balanced=True" in message for message in result.messages)
